@@ -51,6 +51,13 @@ class TestGetAccounts:
         assert result[0]["current_balance"] == 0
         assert result[0]["display_balance"] == 0
 
+    async def test_handles_null_owned_by_user(self, mock_monarch_client):
+        mock_monarch_client.get_accounts.return_value = {
+            "accounts": [{"id": "acc-3", "ownedByUser": None}]
+        }
+        result = json.loads(await get_accounts())
+        assert result[0]["owned_by_user"] is None
+
     async def test_handles_empty_accounts(self, mock_monarch_client):
         mock_monarch_client.get_accounts.return_value = {"accounts": []}
         result = json.loads(await get_accounts())
