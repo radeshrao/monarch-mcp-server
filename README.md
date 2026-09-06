@@ -321,6 +321,7 @@ live tool registry and the functions' signatures, so it does not drift.
 | `monarch_logout` | Clear the stored session and drop the cached client | None |
 | `monarch_whoami` | Report who is signed in and what the account's plan entitles it to | None |
 | `refresh_accounts` | Request account data refresh from financial institutions | `account_ids`? |
+| `reorder_transaction_rule` | Move a transaction rule to a new position in the evaluation order | `rule_id`, `new_order` |
 | `review_recurring_stream` | Set the review status of a recurring transaction stream | `stream_id`, `review_status` |
 | `search_transactions` | Search and filter transactions with comprehensive filtering options | `search`?, `limit`?, `offset`?, `start_date`?, `end_date`?, `category_ids`?, `account_ids`?, `tag_ids`?, `has_attachments`?, `has_notes`?, `hidden_from_reports`?, `is_split`?, `is_recurring`? |
 | `set_budget_amount` | Set or update a budget amount for a category or category group | `amount`, `category_id`?, `category_group_id`?, `start_date`?, `apply_to_future`? |
@@ -535,7 +536,7 @@ tool that is not there.
 }
 ```
 
-This leaves 25 of the 49 tools available, covering everything that reads.
+This leaves 25 of the 50 tools available, covering everything that reads.
 Read only is off by default, so existing setups are unaffected. Note that it
 also removes the login and logout tools, since those change durable state, so
 authenticate with `login_setup.py` before enabling it.
@@ -548,7 +549,7 @@ These tools mutate your Monarch data. The list is every registered tool that wri
 
 **Tags**: `set_transaction_tags`, `add_transaction_tag`, `create_transaction_tag`
 
-**Rules**: `create_transaction_rule`, `update_transaction_rule`, `delete_transaction_rule`
+**Rules**: `create_transaction_rule`, `update_transaction_rule`, `delete_transaction_rule`, `reorder_transaction_rule`
 
 **Categories and budgets**: `create_transaction_category`, `update_category`, `set_budget_amount`
 
