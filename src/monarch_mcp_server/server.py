@@ -84,6 +84,9 @@ from monarch_mcp_server.tools.financial import (  # noqa: F401
 from monarch_mcp_server.tools.sync_health import (  # noqa: F401
     get_account_sync_health,
 )
+from monarch_mcp_server.tools.debt import (  # noqa: F401
+    get_debt_paydown,
+)
 from monarch_mcp_server.tools.merchants import (  # noqa: F401
     get_merchant,
     update_merchant,
