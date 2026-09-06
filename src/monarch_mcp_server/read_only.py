@@ -61,6 +61,8 @@ MUTATING_TOOLS: FrozenSet[str] = frozenset(
         "monarch_login",
         "monarch_login_with_token",
         "monarch_logout",
+        # Accounts
+        "update_account",
         # Side effecting: posts a refresh request to the institutions.
         "refresh_accounts",
     }

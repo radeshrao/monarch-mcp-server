@@ -276,7 +276,7 @@ Once authenticated, use these tools directly in Claude Desktop or Claude Code:
 
 ## 🛠️ Available Tools
 
-All 57 registered tools. Required parameters are listed first, optional ones
+All 58 registered tools. Required parameters are listed first, optional ones
 are marked with a trailing question mark. This table is generated from the
 live tool registry and the functions' signatures, so it does not drift.
 
@@ -332,6 +332,7 @@ live tool registry and the functions' signatures, so it does not drift.
 | `set_transaction_tags` | Set tags on a transaction | `transaction_id`, `tag_ids` |
 | `setup_authentication` | Get setup instructions | None |
 | `split_transaction` | Split a transaction into multiple parts with different categories/merchants | `transaction_id`, `splits` |
+| `update_account` | Update an account's name, balance, type or visibility settings | `account_id`, `name`?, `balance`?, `account_type`?, `account_sub_type`?, `include_in_net_worth`?, `hide_from_summary_list`?, `hide_transactions_from_reports`?, `dry_run`? |
 | `update_category` | Update an existing category's settings | `category_id`, `name`?, `icon`?, `group_id`?, `category_type`?, `exclude_from_budget`?, `budget_variability`?, `rollover_enabled`?, `rollover_start_month`?, `rollover_starting_balance`?, `rollover_frequency`?, `rollover_target_amount`?, `rollover_type`?, `confirm_rollover_reset`?, `dry_run`? |
 | `update_merchant` | Update a merchant's name and/or recurring transaction stream settings | `merchant_id`, `name`?, `is_recurring`?, `frequency`?, `base_date`?, `amount`?, `is_active`? |
 | `update_savings_goal` | Update a savings goal's target or monthly contribution | `goal_id`, `target_amount`?, `target_date`?, `name`?, `priority`?, `goal_type`?, `is_sinking_fund`? |
@@ -541,7 +542,7 @@ tool that is not there.
 }
 ```
 
-This leaves 30 of the 57 tools available, covering everything that reads.
+This leaves 30 of the 58 tools available, covering everything that reads.
 Read only is off by default, so existing setups are unaffected. Note that it
 also removes the login and logout tools, since those change durable state, so
 authenticate with `login_setup.py` before enabling it.
@@ -549,6 +550,8 @@ authenticate with `login_setup.py` before enabling it.
 ### Recommended: require approval for mutating tools
 
 These tools mutate your Monarch data. The list is every registered tool that writes, checked against the source rather than maintained by hand:
+
+**Accounts**: `update_account`
 
 **Transactions**: `create_transaction`, `update_transaction`, `delete_transaction`, `categorize_transaction`, `update_transaction_notes`, `mark_transaction_reviewed`, `bulk_categorize_transactions`, `split_transaction`, `upload_account_balance_history`
 
@@ -568,7 +571,7 @@ These tools mutate your Monarch data. The list is every registered tool that wri
 
 Because the LLM can be influenced by data it reads back (a malicious-looking memo or merchant name in a transaction), the safest setup is to configure your MCP client to require manual approval before any mutating tool runs. In Claude Desktop and Claude Code this is the default behavior for unknown tools; keep it that way for the tools listed above rather than allow-listing them.
 
-`bulk_categorize_transactions`, `upload_account_balance_history` and `update_category` accept a `dry_run=True` argument that returns the planned changes without executing them, useful for previewing before approving.
+`bulk_categorize_transactions`, `upload_account_balance_history`, `update_account` and `update_category` accept a `dry_run=True` argument that returns the planned changes without executing them, useful for previewing before approving.
 
 `update_category` additionally requires `confirm_rollover_reset=True` before `rollover_start_month` or `rollover_starting_balance` will be applied. Those two restart a category's rollover period and discard the balance accumulated in it, which cannot be undone, so they cannot ride along unnoticed in a call that otherwise reads like a rename.
 

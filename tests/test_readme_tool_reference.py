@@ -42,6 +42,17 @@ async def test_every_registered_tool_is_documented():
     )
 
 
+async def test_every_tool_is_re_exported_from_server():
+    """server.py re-exports every tool for backward compatible imports.
+
+    This also keeps the parameter check below honest: it resolves functions
+    through server.py, so a tool missing here would be skipped rather than
+    checked, and its README row could say anything.
+    """
+    missing = sorted(n for n in await _registered() if not hasattr(srv, n))
+    assert not missing, f"tools not re-exported from server.py: {missing}"
+
+
 async def test_documented_parameters_match_the_signatures():
     mismatches = []
     for name, params in _documented().items():
