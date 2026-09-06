@@ -93,7 +93,11 @@ def install(mcp: Any) -> None:
         register = original_tool(*args, **kwargs)
 
         def decorator(fn: F) -> F:
-            name = kwargs.get("name") or getattr(fn, "__name__", "")
+            # FastMCP.tool() takes `name` as its first positional parameter, so
+            # @mcp.tool("some_name") must be honoured too. Comparing only
+            # fn.__name__ would let a renamed mutating tool through the gate.
+            positional = args[0] if args and isinstance(args[0], str) else None
+            name = positional or kwargs.get("name") or getattr(fn, "__name__", "")
             if name in MUTATING_TOOLS:
                 logger.info("Read only mode: not registering %s", name)
                 return fn

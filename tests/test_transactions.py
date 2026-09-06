@@ -24,8 +24,8 @@ class TestGetTransactionsNeedingReview:
     """Tests for get_transactions_needing_review tool."""
 
     @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
-    async def test_get_transactions_needs_review_filter(self, mock_get_client):
-        """Test filtering by needs_review flag."""
+    async def test_needs_review_flag_is_delegated_to_monarch(self, mock_get_client):
+        """The flag is sent upstream rather than applied to the page here."""
         mock_client = AsyncMock()
         mock_client.get_transactions.return_value = {
             "allTransactions": {
@@ -1165,3 +1165,74 @@ class TestReviewQueueFiltersServerSide:
         assert envelope["count"] == 1
         assert envelope["total_count"] is None
         assert envelope["search"] == {"local_filter": "uncategorized_only"}
+
+
+class TestTruncationIsHonestUnderLocalFiltering:
+    """uncategorized_only shrinks the page after the fact.
+
+    That drops `count` below `limit`, which defeats the envelope's fallback
+    and asserted completeness on a page that was in fact truncated.
+    """
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    async def test_full_page_trimmed_by_local_filter_is_still_truncated(
+        self, mock_get_client
+    ):
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {
+                "results": [
+                    {"id": f"t{i}", "category": None if i < 3 else {"id": "c1"}}
+                    for i in range(100)
+                ],
+                "totalCount": 900,
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        envelope = json.loads(
+            await get_transactions_needing_review(limit=100, uncategorized_only=True)
+        )
+        assert envelope["count"] == 3
+        assert envelope["truncated"] is True, (
+            "3 rows kept from a full page against 900 must not read as complete"
+        )
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    async def test_short_page_is_not_marked_truncated(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {
+                "results": [{"id": "t1", "category": None}],
+                "totalCount": 1,
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        envelope = json.loads(
+            await get_transactions_needing_review(limit=100, uncategorized_only=True)
+        )
+        assert envelope["truncated"] is False
+
+
+class TestCreateTransactionReportsRejection:
+    async def test_refused_creation_is_not_reported_as_success(
+        self, mock_monarch_client
+    ):
+        mock_monarch_client.create_transaction.return_value = {
+            "createTransaction": {
+                "transaction": None,
+                "errors": {"message": "Invalid account", "code": "INVALID"},
+            }
+        }
+        result = json.loads(
+            await create_transaction(
+                date="2026-01-01",
+                account_id="acc-1",
+                amount=-5.0,
+                merchant_name="X",
+                category_id="cat-1",
+            )
+        )
+        assert result["success"] is False
+        assert "Invalid account" in json.dumps(result)

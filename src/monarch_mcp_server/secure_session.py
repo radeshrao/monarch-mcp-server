@@ -182,12 +182,6 @@ def _parse_chunk_index(raw: str) -> Optional[Tuple[int, Optional[int]]]:
     return count, generation
 
 
-def _parse_chunk_count(raw: str) -> Optional[int]:
-    """Return the chunk count if `raw` is a chunk-index entry, else None."""
-    parsed = _parse_chunk_index(raw)
-    return parsed[0] if parsed else None
-
-
 def _write_secret_file(path: Path, data: str) -> None:
     """Write *data* to *path* atomically, never exposing it at a wider mode.
 
@@ -696,13 +690,30 @@ class SecureMonarchSession:
         logger.warning("⚠️  MonarchMoney instance has no token or cookies to save")
 
     def _cleanup_old_session_files(self) -> None:
-        """Clean up old insecure session files."""
-        home = os.path.expanduser("~")
-        cleanup_paths = [
-            os.path.join(home, ".mm", "mm_session.pickle"),
-            os.path.join(home, "monarch_session.json"),
-            os.path.join(home, ".mm"),  # Remove the entire directory if empty
-        ]
+        """Clean up old insecure session files.
+
+        Both the home directory and the working directory are swept. The
+        upstream library's ``SESSION_DIR`` is the relative path ``.mm``, so it
+        writes its pickle under whatever the process CWD happens to be, which
+        for a server started from a checkout is the repo itself. Sweeping only
+        ``$HOME`` meant these files were never matched and a plaintext token
+        could sit next to the source indefinitely.
+        """
+        bases = [Path.home()]
+        try:
+            cwd = Path.cwd()
+        except OSError:  # deleted working directory
+            cwd = None
+        if cwd is not None and cwd != Path.home():
+            bases.append(cwd)
+
+        cleanup_paths = []
+        for base in bases:
+            cleanup_paths += [
+                str(base / ".mm" / "mm_session.pickle"),
+                str(base / "monarch_session.json"),
+                str(base / ".mm"),  # Removed only if it ends up empty.
+            ]
 
         for path in cleanup_paths:
             try:

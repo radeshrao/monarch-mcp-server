@@ -8,7 +8,12 @@ from gql import gql
 
 from monarch_mcp_server.app import mcp
 from monarch_mcp_server.client import get_monarch_client
-from monarch_mcp_server.helpers import json_success, json_error
+from monarch_mcp_server.helpers import (
+    json_error,
+    json_rejected,
+    json_success,
+    payload_errors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +87,9 @@ async def create_transaction_category(
         if rollover_type is not None:
             kwargs["rollover_type"] = rollover_type
         result = await client.create_transaction_category(**kwargs)
+        errors = payload_errors(result, "createCategory")
+        if errors:
+            return json_rejected("create_transaction_category", errors)
         return json_success(result)
     except Exception as e:
         return json_error("create_transaction_category", e)
@@ -280,6 +288,7 @@ async def update_category(
                 rollover_start_month="2026-05-01",
                 rollover_starting_balance=0,
                 rollover_frequency="variable",
+                confirm_rollover_reset=True,
             )
 
         Preview changes without applying:
@@ -312,7 +321,10 @@ async def update_category(
             )
             if value is not None
         ]
-        if resets_rollover and not confirm_rollover_reset:
+        # A dry run writes nothing, so it needs no confirmation. Blocking it
+        # here would contradict this very message, which offers dry_run as
+        # the way to preview the change.
+        if resets_rollover and not confirm_rollover_reset and not dry_run:
             return json_success(
                 {
                     "success": False,

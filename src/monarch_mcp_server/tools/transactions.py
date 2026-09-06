@@ -663,6 +663,9 @@ async def create_transaction(
             transaction_data["update_balance"] = update_balance
 
         result = await client.create_transaction(**transaction_data)
+        errors = payload_errors(result, "createTransaction")
+        if errors:
+            return json_rejected("create_transaction", errors)
         return json_success(result)
     except Exception as e:
         return json_error("create_transaction", e)
@@ -913,10 +916,10 @@ async def delete_transaction(transaction_id: str) -> str:
     """
     try:
         client = await get_monarch_client()
+        # Upstream delete_transaction returns a bool, not a GraphQL payload, so
+        # there is no errors object to inspect. It raises on failure, which the
+        # except below turns into an error result.
         result = await client.delete_transaction(transaction_id=transaction_id)
-        errors = payload_errors(result, "deleteTransaction")
-        if errors:
-            return json_rejected("delete_transaction", errors)
         return json_success(result)
     except Exception as e:
         return json_error("delete_transaction", e)
@@ -1078,18 +1081,24 @@ async def get_transactions_needing_review(
         # page below the limit. Reporting the server side total alongside it
         # would imply this page is complete, which it is not.
         server_total = None if uncategorized_only else total_count
-        return json_success(
-            tool_response_envelope(
-                "get_transactions_needing_review",
-                args,
-                transaction_list,
-                total_count=server_total,
-                search_info=(
-                    {"local_filter": "uncategorized_only"}
-                    if uncategorized_only
-                    else None
-                ),
-            )
+        # Truncation must be judged on the page Monarch returned, not on what
+        # survived the local filter. Otherwise a page of 100 trimmed to 3 rows
+        # against a server total of 900 reports truncated=False, asserting
+        # completeness on 3 of 900.
+        raw_page_filled = isinstance(limit, int) and len(results) >= limit
+        envelope = tool_response_envelope(
+            "get_transactions_needing_review",
+            args,
+            transaction_list,
+            total_count=server_total,
+            search_info=(
+                {"local_filter": "uncategorized_only"}
+                if uncategorized_only
+                else None
+            ),
         )
+        if raw_page_filled:
+            envelope["truncated"] = True
+        return json_success(envelope)
     except Exception as e:
         return json_error("get_transactions_needing_review", e)

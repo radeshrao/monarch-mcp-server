@@ -11,7 +11,12 @@ from gql import gql
 
 from monarch_mcp_server.app import mcp
 from monarch_mcp_server.client import get_monarch_client
-from monarch_mcp_server.helpers import json_success, json_error
+from monarch_mcp_server.helpers import (
+    json_error,
+    json_rejected,
+    json_success,
+    payload_errors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -222,19 +227,11 @@ async def update_savings_goal(
             variables={"input": {"id": goal_id, **changes}},
         )
 
-        payload = result.get("updateSavingsGoal") or {}
-        errors = payload.get("errors")
+        errors = payload_errors(result, "updateSavingsGoal")
         if errors:
-            meaningful = {
-                k: v for k, v in errors.items()
-                if k != "__typename" and v is not None
-            }
-            return json_success({
-                "success": False,
-                "errors": meaningful or {
-                    "message": "Monarch rejected the update without a reason"
-                },
-            })
+            return json_rejected("update_savings_goal", errors)
+
+        payload = result.get("updateSavingsGoal") or {}
 
         goal = payload.get("savingsGoal") or {}
         return json_success({
@@ -380,19 +377,11 @@ async def set_goal_contribution(
                 ],
             }},
         )
-        payload = result.get("updateSavingsGoal") or {}
-        errors = payload.get("errors")
+        errors = payload_errors(result, "updateSavingsGoal")
         if errors:
-            meaningful = {
-                k: v for k, v in errors.items()
-                if k != "__typename" and v is not None
-            }
-            return json_success({
-                "success": False,
-                "errors": meaningful or {
-                    "message": "Monarch rejected the update without a reason"
-                },
-            })
+            return json_rejected("set_goal_contribution", errors)
+
+        payload = result.get("updateSavingsGoal") or {}
         return json_success({
             "success": True,
             "goal_id": goal_id,
