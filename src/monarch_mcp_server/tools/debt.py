@@ -1,7 +1,7 @@
 """Debt paydown tools."""
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from gql import gql
 
@@ -85,7 +85,8 @@ async def get_debt_paydown(method: str = "planned") -> str:
         accounts = result.get("debtAccounts") or []
         plan: Dict[str, Any] = result.get("debtPaydownPlan") or {}
 
-        included, excluded = [], []
+        included: List[Dict[str, Any]] = []
+        excluded: List[Dict[str, Any]] = []
         for a in accounts:
             row = {
                 "account_id": a.get("id"),

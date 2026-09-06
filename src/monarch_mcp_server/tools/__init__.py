@@ -14,5 +14,6 @@ from monarch_mcp_server.tools import (  # noqa: F401
     financial,
     sync_health,
     debt,
+    goals,
     merchants,
 )
