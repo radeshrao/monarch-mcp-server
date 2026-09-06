@@ -318,6 +318,7 @@ live tool registry and the functions' signatures, so it does not drift.
 | `monarch_login` | Sign in via a secure form in the client UI | None |
 | `monarch_login_with_token` | Sign in with a browser copied session token | None |
 | `monarch_logout` | Clear the stored session and drop the cached client | None |
+| `update_account` | Update an account's name, balance, type or visibility settings | `account_id`, `name`?, `balance`?, `account_type`?, `account_sub_type`?, `include_in_net_worth`?, `hide_from_summary_list`?, `hide_transactions_from_reports`?, `dry_run`? |
 | `refresh_accounts` | Request account data refresh from financial institutions | `account_ids`? |
 | `review_recurring_stream` | Set the review status of a recurring transaction stream | `stream_id`, `review_status` |
 | `search_transactions` | Search and filter transactions with comprehensive filtering options | `search`?, `limit`?, `offset`?, `start_date`?, `end_date`?, `category_ids`?, `account_ids`?, `tag_ids`?, `has_attachments`?, `has_notes`?, `hidden_from_reports`?, `is_split`?, `is_recurring`? |
@@ -542,6 +543,8 @@ authenticate with `login_setup.py` before enabling it.
 
 These tools mutate your Monarch data. The list is every registered tool that writes, checked against the source rather than maintained by hand:
 
+**Accounts**: `update_account`
+
 **Transactions**: `create_transaction`, `update_transaction`, `delete_transaction`, `categorize_transaction`, `update_transaction_notes`, `mark_transaction_reviewed`, `bulk_categorize_transactions`, `split_transaction`, `upload_account_balance_history`
 
 **Tags**: `set_transaction_tags`, `add_transaction_tag`, `create_transaction_tag`
@@ -558,7 +561,7 @@ These tools mutate your Monarch data. The list is every registered tool that wri
 
 Because the LLM can be influenced by data it reads back (a malicious-looking memo or merchant name in a transaction), the safest setup is to configure your MCP client to require manual approval before any mutating tool runs. In Claude Desktop and Claude Code this is the default behavior for unknown tools; keep it that way for the tools listed above rather than allow-listing them.
 
-`bulk_categorize_transactions`, `upload_account_balance_history` and `update_category` accept a `dry_run=True` argument that returns the planned changes without executing them, useful for previewing before approving.
+`bulk_categorize_transactions`, `upload_account_balance_history`, `update_account` and `update_category` accept a `dry_run=True` argument that returns the planned changes without executing them, useful for previewing before approving.
 
 `update_category` additionally requires `confirm_rollover_reset=True` before `rollover_start_month` or `rollover_starting_balance` will be applied. Those two restart a category's rollover period and discard the balance accumulated in it, which cannot be undone, so they cannot ride along unnoticed in a call that otherwise reads like a rename.
 
