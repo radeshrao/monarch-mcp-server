@@ -49,6 +49,7 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
          "command": "/opt/homebrew/bin/uv",
          "args": [
            "run",
+           "--locked",
            "--project",
            "/path/to/your/monarch-mcp-server",
            "monarch-mcp-server"
@@ -60,8 +61,11 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
 
    **Important**: Replace `/path/to/your/monarch-mcp-server` with your actual path!
 
-   `uv run --project` resolves dependencies from the repo's `uv.lock`, and
-   `monarch-mcp-server` is the console script declared in `pyproject.toml`.
+   `uv run --locked --project` resolves dependencies from the repo's
+   `uv.lock`, and `monarch-mcp-server` is the console script declared in
+   `pyproject.toml`. `--locked` matters: without it, a lockfile that has
+   drifted from `pyproject.toml` is silently re-resolved against PyPI and the
+   recorded hashes stop being enforced. With it, drift is a startup error.
    Earlier versions of this README used `uv run --with 'mcp[cli]'`, which
    builds a fresh unpinned environment on every launch and silently picks up
    whatever the newest release happens to be. That is what broke every install
@@ -89,6 +93,7 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
          "command": "/opt/homebrew/bin/uv",
          "args": [
            "run",
+           "--locked",
            "--project",
            "/path/to/your/monarch-mcp-server",
            "monarch-mcp-server"
@@ -108,6 +113,7 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
        "command": "/opt/homebrew/bin/uv",
        "args": [
          "run",
+         "--locked",
          "--project",
          "/path/to/your/monarch-mcp-server",
          "monarch-mcp-server"

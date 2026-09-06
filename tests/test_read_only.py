@@ -103,3 +103,129 @@ class TestMutatingToolList:
         section = readme[readme.index("### Recommended: require approval") :]
         missing = {n for n in read_only.MUTATING_TOOLS if f"`{n}`" not in section}
         assert not missing, f"in MUTATING_TOOLS but not the README list: {sorted(missing)}"
+
+
+class TestGateCannotSilentlyMissANewWriteTool:
+    """The direction that actually matters.
+
+    Asserting every name in MUTATING_TOOLS exists catches a typo. It cannot
+    catch a newly added writing tool that nobody put in the set, which is the
+    failure that exposes a write in a deployment whose whole premise is that it
+    cannot write. This derives the mutating set from the code instead.
+    """
+
+    # Library calls that write. Derived from the upstream client surface.
+    WRITING_CLIENT_METHODS = frozenset(
+        {
+            "create_transaction",
+            "update_transaction",
+            "delete_transaction",
+            "set_transaction_tags",
+            "create_transaction_tag",
+            "update_transaction_splits",
+            "create_transaction_category",
+            "delete_transaction_category",
+            "set_budget_amount",
+            "update_account",
+            "delete_account",
+            "request_accounts_refresh",
+            "request_accounts_refresh_and_wait",
+            "upload_account_balance_history",
+        }
+    )
+
+    @staticmethod
+    def _is_mutation_document(obj):
+        """Whether a module level gql constant is a mutation.
+
+        Read from the parsed AST rather than the source text. gql 4.x wraps the
+        DocumentNode in a GraphQLRequest, so both shapes are handled; a text
+        match would also be fooled by the word "mutation" in a comment.
+        """
+        from graphql.language.ast import DocumentNode, OperationDefinitionNode
+
+        doc = getattr(obj, "document", obj)
+        if not isinstance(doc, DocumentNode):
+            return False
+        return any(
+            isinstance(d, OperationDefinitionNode)
+            and getattr(d.operation, "value", d.operation) == "mutation"
+            for d in doc.definitions
+        )
+
+    def _mutating_from_source(self):
+        import inspect
+        import re
+
+        from monarch_mcp_server import read_only as ro
+        from monarch_mcp_server import server as srv
+
+        mutating = set()
+        for name in dir(srv):
+            fn = getattr(srv, name)
+            if not callable(fn) or not hasattr(fn, "__module__"):
+                continue
+            if not str(fn.__module__).startswith("monarch_mcp_server.tools"):
+                continue
+            try:
+                source = inspect.getsource(fn)
+            except (OSError, TypeError):
+                continue
+
+            module = __import__(fn.__module__, fromlist=["x"])
+
+            for const in re.findall(r"\b([A-Z][A-Z0-9_]{3,})\b", source):
+                if self._is_mutation_document(getattr(module, const, None)):
+                    mutating.add(name)
+
+            for method in self.WRITING_CLIENT_METHODS:
+                if f"client.{method}(" in source:
+                    mutating.add(name)
+        return mutating, ro
+
+    async def test_every_writing_tool_is_gated(self):
+        from monarch_mcp_server.app import mcp
+
+        mutating, ro = self._mutating_from_source()
+        registered = {t.name for t in await mcp.list_tools()}
+        ungated = sorted((mutating & registered) - ro.MUTATING_TOOLS)
+        assert not ungated, (
+            "these tools write but are not in MUTATING_TOOLS, so read only "
+            f"mode would still expose them: {ungated}"
+        )
+
+    async def test_the_detector_actually_detects_something(self):
+        """Guard against the check above silently matching nothing."""
+        mutating, _ = self._mutating_from_source()
+        assert len(mutating) >= 25, (
+            f"detector found only {len(mutating)} writing tools, so it is "
+            "probably broken rather than the code being clean"
+        )
+
+
+class TestPositionalToolName:
+    def test_a_positionally_named_mutating_tool_is_still_gated(self, monkeypatch):
+        """FastMCP.tool() takes name as its first positional parameter.
+
+        Comparing only fn.__name__ would let @mcp.tool("delete_transaction")
+        register under a gated name while slipping past the gate.
+        """
+        registered = []
+
+        class FakeMCP:
+            def tool(self, *args, **kwargs):
+                def decorator(fn):
+                    registered.append(args[0] if args else fn.__name__)
+                    return fn
+
+                return decorator
+
+        monkeypatch.setenv(read_only.ENV_VAR, "1")
+        fake = FakeMCP()
+        read_only.install(fake)
+
+        def some_helper():
+            pass
+
+        fake.tool("delete_transaction")(some_helper)
+        assert registered == []

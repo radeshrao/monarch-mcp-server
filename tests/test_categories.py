@@ -547,3 +547,59 @@ class TestGetCashflowByMonth:
         )
         assert "get_cashflow_by_month" in result
 
+
+
+class TestRolloverGuardAllowsPreview:
+    @patch("monarch_mcp_server.tools.categories.get_monarch_client")
+    async def test_dry_run_needs_no_confirmation(self, mock_get_client):
+        """The guard's own message offers dry_run as the way to preview.
+
+        Blocking the preview behind the confirmation made that advice
+        impossible to follow. A dry run writes nothing.
+        """
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "category": {
+                "name": "Gifts",
+                "icon": "G",
+                "excludeFromBudget": False,
+                "isDisabled": False,
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await update_category(
+                category_id="cat-1",
+                rollover_starting_balance=0,
+                dry_run=True,
+            )
+        )
+        assert result["dry_run"] is True
+        assert "rolloverStartingBalance" in result["proposed_changes"]
+
+    @patch("monarch_mcp_server.tools.categories.get_monarch_client")
+    async def test_real_write_still_requires_confirmation(self, mock_get_client):
+        result = json.loads(
+            await update_category(category_id="cat-1", rollover_starting_balance=0)
+        )
+        assert result["success"] is False
+        assert "confirm_rollover_reset" in result["message"]
+        mock_get_client.assert_not_called()
+
+
+class TestCreateCategoryReportsRejection:
+    @patch("monarch_mcp_server.tools.categories.get_monarch_client")
+    async def test_refused_creation_is_not_reported_as_success(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_client.create_transaction_category.return_value = {
+            "createCategory": {
+                "category": None,
+                "errors": {"message": "name already taken", "code": "DUPLICATE"},
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(await create_transaction_category("grp-1", "Coffee"))
+        assert result["success"] is False
+        assert "already taken" in json.dumps(result)

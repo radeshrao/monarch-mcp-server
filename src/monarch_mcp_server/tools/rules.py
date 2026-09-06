@@ -7,7 +7,12 @@ from gql import gql
 
 from monarch_mcp_server.app import mcp
 from monarch_mcp_server.client import get_monarch_client
-from monarch_mcp_server.helpers import json_success, json_error
+from monarch_mcp_server.helpers import (
+    json_error,
+    json_rejected,
+    json_success,
+    payload_errors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -288,12 +293,14 @@ def _build_amount_criteria(
     # amount threshold that silently disappears leaves a rule matching every
     # transaction from that merchant, and with apply_to_existing it rewrites
     # the history immediately. A standing policy is worth failing loudly over.
-    if operator or value is not None:
+    if operator or value is not None or lower is not None or upper is not None:
         raise ValueError(
-            "amount_operator and amount_value must be given together "
-            f"(got amount_operator={operator!r}, amount_value={value!r}). "
-            "Use amount_operator='between' with amount_lower and amount_upper "
-            "for a range."
+            "Incomplete amount criteria "
+            f"(amount_operator={operator!r}, amount_value={value!r}, "
+            f"amount_lower={lower!r}, amount_upper={upper!r}). "
+            "Give amount_operator with amount_value, or "
+            "amount_operator='between' with both amount_lower and "
+            "amount_upper."
         )
     return None
 
@@ -879,6 +886,16 @@ mutation Web_UpdateRuleOrderMutation($id: ID!, $order: Int!) {
       order
       __typename
     }
+    errors {
+      fieldErrors {
+        field
+        messages
+        __typename
+      }
+      message
+      code
+      __typename
+    }
     __typename
   }
 }
@@ -929,14 +946,28 @@ async def reorder_transaction_rule(rule_id: str, new_order: int) -> str:
             graphql_query=REORDER_RULE_MUTATION,
             variables={"id": rule_id, "order": new_order},
         )
+        # Monarch signals a refused mutation with an errors object inside an
+        # HTTP 200. Rule order decides which rule wins when two match the same
+        # transaction, so a silently ignored reorder must not read as done.
+        errors = payload_errors(result, "updateTransactionRuleOrderV2")
+        if errors:
+            return json_rejected("reorder_transaction_rule", errors)
+
         payload = result.get("updateTransactionRuleOrderV2") or {}
         rules = payload.get("transactionRules") or []
+
+        # Read the landed position back from the response rather than echoing
+        # the argument, so the reported outcome is what Monarch actually did.
+        landed = next(
+            (r.get("order") for r in rules if r.get("id") == rule_id), None
+        )
 
         return json_success({
             "success": True,
             "rule_id": rule_id,
             "moved_from": existing.get("order"),
-            "moved_to": new_order,
+            "moved_to": landed if landed is not None else new_order,
+            "requested_order": new_order,
             "order": [
                 {"rule_id": r.get("id"), "order": r.get("order")}
                 for r in sorted(rules, key=lambda r: r.get("order") or 0)

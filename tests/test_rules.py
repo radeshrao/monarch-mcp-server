@@ -844,3 +844,110 @@ class TestReorderTransactionRule:
 
         assert data["success"] is False
         mock_client.gql_call.assert_not_called()
+
+
+class TestRangeCriteriaAreNotSilentlyDropped:
+    """The range half of the same hole the amount guard was added to close.
+
+    amount_lower/amount_upper without an operator produced no amountCriteria
+    at all, so the rule matched every transaction from the merchant and, with
+    apply_to_existing, rewrote history immediately while reporting success.
+    """
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_range_without_operator_is_rejected(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await create_transaction_rule(
+                merchant_criteria_value="Costco",
+                amount_lower=10,
+                amount_upper=50,
+                set_category_id="cat_x",
+                apply_to_existing=True,
+            )
+        )
+        assert result.get("error") or result.get("success") is False
+        mock_client.gql_call.assert_not_called()
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_lone_upper_bound_is_rejected(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await create_transaction_rule(
+                merchant_criteria_value="Costco", amount_upper=50
+            )
+        )
+        assert result.get("error") or result.get("success") is False
+        mock_client.gql_call.assert_not_called()
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_a_valid_between_rule_still_works(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "createTransactionRuleV2": {
+                "errors": None,
+                "transactionRule": {"id": "r1"},
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await create_transaction_rule(
+                merchant_criteria_value="Costco",
+                amount_operator="between",
+                amount_lower=10,
+                amount_upper=50,
+                set_category_id="cat_x",
+            )
+        )
+        assert result["success"] is True
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent["amountCriteria"]["valueRange"] == {"lower": 10, "upper": 50}
+
+
+class TestReorderReportsRejection:
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_refused_reorder_is_not_reported_as_success(self, mock_get_client):
+        """Rule order decides which rule wins, so a silent no-op mis-categorizes."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = [
+            {"transactionRules": [{"id": "r1", "order": 5}]},
+            {
+                "updateTransactionRuleOrderV2": {
+                    "transactionRules": [],
+                    "errors": {"message": "not allowed", "code": "FORBIDDEN"},
+                }
+            },
+        ]
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(await reorder_transaction_rule("r1", 0))
+        assert result["success"] is False
+        assert "not allowed" in json.dumps(result)
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_landed_position_is_read_back_not_echoed(self, mock_get_client):
+        """Monarch renumbers, so the landed order can differ from the request."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = [
+            {"transactionRules": [{"id": "r1", "order": 5}]},
+            {
+                "updateTransactionRuleOrderV2": {
+                    "transactionRules": [
+                        {"id": "r1", "order": 2},
+                        {"id": "r2", "order": 0},
+                    ],
+                    "errors": None,
+                }
+            },
+        ]
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(await reorder_transaction_rule("r1", 99))
+        assert result["success"] is True
+        assert result["moved_to"] == 2
+        assert result["requested_order"] == 99
