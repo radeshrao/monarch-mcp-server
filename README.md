@@ -319,6 +319,7 @@ live tool registry and the functions' signatures, so it does not drift.
 | `monarch_login` | Sign in via a secure form in the client UI | None |
 | `monarch_login_with_token` | Sign in with a browser copied session token | None |
 | `monarch_logout` | Clear the stored session and drop the cached client | None |
+| `monarch_whoami` | Report who is signed in and what the account's plan entitles it to | None |
 | `refresh_accounts` | Request account data refresh from financial institutions | `account_ids`? |
 | `review_recurring_stream` | Set the review status of a recurring transaction stream | `stream_id`, `review_status` |
 | `search_transactions` | Search and filter transactions with comprehensive filtering options | `search`?, `limit`?, `offset`?, `start_date`?, `end_date`?, `category_ids`?, `account_ids`?, `tag_ids`?, `has_attachments`?, `has_notes`?, `hidden_from_reports`?, `is_split`?, `is_recurring`? |
