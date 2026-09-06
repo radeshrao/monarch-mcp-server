@@ -35,6 +35,7 @@ async def get_accounts() -> str:
             account_info = {
                 "id": account.get("id"),
                 "name": account.get("displayName") or account.get("name"),
+                "owned_by_user": (account.get("ownedByUser") or {}).get("displayName"), # Institution owner, not the Monarch Account Owner.
                 "type": (account.get("type") or {}).get("name"),
                 "balance": account.get("currentBalance"),
                 "current_balance": account.get("currentBalance"),
