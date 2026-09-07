@@ -3,8 +3,8 @@
 # This server holds a long-lived credential for the user's real financial
 # accounts, so a compromised or vulnerable dependency is the highest-impact
 # failure mode in the repo. One check lives here: `audit` screens the *locked*
-# dependency set (everything `uv.lock` actually resolves to, not the loose
-# ranges in requirements.txt) against both the PyPI advisory database and OSV,
+# dependency set (everything `uv.lock` actually resolves to) against both the
+# PyPI advisory database and OSV,
 # and fails on anything not already recorded in .github/audit-baseline.txt.
 #
 # There was a `dependency-review` job here. It was removed because the

@@ -2,7 +2,14 @@
 #
 # Regenerate with:
 #   uv export --frozen --no-emit-project --no-editable --no-dev \
-#     --format requirements-txt -o requirements.txt
+#     --format requirements-txt --output-file requirements-lock.txt
+#
+# Named requirements-lock.txt rather than requirements.txt on purpose.
+# Dependabot treats a root requirements.txt as an independent pip manifest and
+# resolves it separately from uv.lock. It did exactly that here: one PR
+# carried uv.lock pinning mcp 1.13.1 while requirements.txt said mcp 2.1.1,
+# a major version the lock never took. This file is derived from uv.lock and
+# must never be resolved on its own.
 #
 # CI fails if this drifts from uv.lock, so regenerate it in the same commit
 # that changes a dependency.
@@ -15,7 +22,7 @@
 # no supply chain guarantee at all.
 #
 # Install with hash checking enforced:
-#   pip install -r requirements.txt --require-hashes
+#   pip install -r requirements-lock.txt --require-hashes
 #   pip install -e . --no-deps
 #    uv export --frozen --no-emit-project --no-editable --no-dev --format requirements-txt
 aiohappyeyeballs==2.6.1 \
