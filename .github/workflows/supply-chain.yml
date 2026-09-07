@@ -1,0 +1,329 @@
+# Supply-chain checks.
+#
+# This server holds a long-lived credential for the user's real financial
+# accounts, so a compromised or vulnerable dependency is the highest-impact
+# failure mode in the repo. Two checks live here:
+#
+#   1. `audit` - screens the *locked* dependency set (everything `uv.lock`
+#      actually resolves to, not the loose ranges in requirements.txt) against
+#      both the PyPI advisory database and OSV.
+#   2. `dependency-review` - blocks a pull request that *introduces* a
+#      known-vulnerable dependency version. This action only works on
+#      `pull_request` events, hence the `if:` guard.
+#
+# Deliberately NOT implemented here (tracked in #99 / #100): the network-egress
+# canary job, the sdist-diff artifact on bump PRs, and PyPI-vs-tag
+# verification. Lockfile drift (`uv lock --check`) belongs to ci.yml (#95), not
+# to this workflow.
+#
+# Hardening notes, since a security workflow is itself an attack surface:
+#   * No `pull_request_target`. Fork PR code is only ever built with a
+#     read-only token and no access to repository secrets.
+#   * Every third-party action is pinned to a full 40-character commit SHA,
+#     with the human-readable tag in a trailing comment. A floating tag on a
+#     security workflow would defeat the point of having one.
+#   * No `${{ ... }}` interpolation of attacker-controlled values (PR title,
+#     branch name, author, body) into any `run:` block. Values that a `run:`
+#     block needs are passed through `env:` instead.
+
+name: Supply chain
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Advisories get published against dependencies we have not touched in
+  # months, so the audit has to run on a clock and not only on code changes.
+  schedule:
+    - cron: "23 6 * * 1" # Mondays, 06:23 UTC
+
+# Least privilege: nothing in this workflow writes anything. `contents: read`
+# is the floor; the one job that needs more widens it at the job level. In
+# particular we do not take `security-events: write`, because we deliberately
+# do not upload SARIF - the findings go to the job summary instead.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR runs are worth cancelling; scheduled and main-branch runs are
+  # not, because their whole job is to produce a record.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  audit:
+    name: Audit locked dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # Pinned so that a compromised pip-audit release cannot walk in through
+      # this job. The advisory data itself is fetched from the services at run
+      # time, so pinning the tool does not stale the results. Bump manually.
+      PIP_AUDIT_VERSION: "2.10.1"
+      REQUIREMENTS_FILE: requirements-audit.txt
+      OSV_REPORT: pip-audit-osv.json
+      PYPI_REPORT: pip-audit-pypi.json
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.10"
+          # sha256 of uv-x86_64-unknown-linux-gnu.tar.gz for the version above,
+          # from the release's published .sha256 file. Verified by the action
+          # before the binary is unpacked.
+          checksum: "173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b"
+          # No cross-run cache: a poisoned cache entry is a real path into a
+          # security job, and this dependency tree is far too small to need one.
+          enable-cache: false
+
+      - name: Export the locked dependency set
+        # `--frozen` guarantees we audit exactly what `uv.lock` already pins. If
+        # the export were allowed to re-resolve, we would be auditing something
+        # other than what ships.
+        #
+        # `--all-extras` pulls the `dev` extra in too. A malicious `pytest` runs
+        # on maintainer machines and on this runner just as a malicious `mcp`
+        # would, so it is in scope for the malicious-package gate below.
+        #
+        # The export carries `--hash=` lines for every pin, which lets the audit
+        # run with `--require-hashes --no-deps --disable-pip`: no resolver, no
+        # index traffic, nothing installed. The only network call is to the
+        # advisory service.
+        run: |
+          uv export \
+            --frozen \
+            --all-extras \
+            --no-emit-project \
+            --no-editable \
+            --format requirements-txt \
+            --output-file "${REQUIREMENTS_FILE}"
+          echo "Exported $(grep -cE '^[A-Za-z0-9]' "${REQUIREMENTS_FILE}") pinned requirements."
+
+      - name: pip-audit against OSV
+        # OSV carries malicious-package advisories (MAL-* IDs) in addition to
+        # CVEs, which is what makes it the gate for known-compromised releases,
+        # typosquats, and versions yanked for malware.
+        #
+        # `|| true`: pip-audit exits non-zero both when it finds something and
+        # when it fails outright. The gate step below distinguishes the two by
+        # checking whether the JSON report parsed.
+        run: |
+          uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+            --requirement "${REQUIREMENTS_FILE}" \
+            --require-hashes \
+            --no-deps \
+            --disable-pip \
+            --strict \
+            --vulnerability-service osv \
+            --aliases on \
+            --format json \
+            --output "${OSV_REPORT}" \
+            --progress-spinner off || true
+
+      - name: pip-audit against the PyPI advisory database
+        # Run as well as OSV, not instead of it: the two databases have
+        # overlapping but not identical coverage, and running both means a
+        # single upstream outage does not blind the check.
+        run: |
+          uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+            --requirement "${REQUIREMENTS_FILE}" \
+            --require-hashes \
+            --no-deps \
+            --disable-pip \
+            --strict \
+            --vulnerability-service pypi \
+            --aliases on \
+            --format json \
+            --output "${PYPI_REPORT}" \
+            --progress-spinner off || true
+
+      - name: Report findings and gate on malicious packages
+        # FAIL vs REPORT, and why it is split this way:
+        #
+        # Hard-failing on any advisory anywhere in the tree is the obvious
+        # choice and the wrong one here. At the time this workflow was written
+        # the committed lock already carried about 30 distinct advisories across
+        # 12 packages: starlette, python-multipart, mcp, click, pygments and
+        # friends, nearly all of them transitive under `mcp[cli]` and none of
+        # them fixable from this repo without waiting on upstream. A hard gate
+        # would have every unrelated PR red on arrival, which trains everyone
+        # to ignore the check. A security control that is always failing is a
+        # security control that is off.
+        #
+        # So the split is by *actionability and false-positive rate*:
+        #
+        #   MAL-* (malicious package) -> hard fail. A malicious-package
+        #   advisory means the exact release we pin is actively compromised.
+        #   There is no "we will get to it" version of that, and the
+        #   false-positive rate is effectively zero. This is precisely the
+        #   attack #99 is about, and it is worth blocking every PR over.
+        #
+        #   Everything else -> report to the job summary. The weekly schedule
+        #   is what actually surfaces these: it puts a standing, dated list in
+        #   front of a maintainer without coupling it to unrelated work.
+        #
+        # The complementary hard gate lives in the `dependency-review` job
+        # below, which can afford `fail-on-severity: high` because it only
+        # fires on PRs that change dependencies - it cannot block unrelated
+        # work by construction. Between the two, a PR that *introduces* a
+        # high-severity advisory is blocked, while advisories that merely
+        # already exist are reported.
+        #
+        # This step interpolates nothing; it reads only files produced above.
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          SOURCES = (
+              ("OSV", os.environ["OSV_REPORT"]),
+              ("PyPI", os.environ["PYPI_REPORT"]),
+          )
+
+          findings: dict[tuple[str, str, str], dict[str, object]] = {}
+          available: list[str] = []
+          unavailable: list[str] = []
+          audited = 0
+
+          for label, path in SOURCES:
+              try:
+                  report = json.loads(pathlib.Path(path).read_text())
+                  dependencies = report["dependencies"]
+              except (OSError, ValueError, KeyError, TypeError):
+                  unavailable.append(label)
+                  continue
+
+              available.append(label)
+              audited = max(audited, len(dependencies))
+
+              for dep in dependencies:
+                  name, version = dep.get("name", "?"), dep.get("version", "?")
+                  for vuln in dep.get("vulns", []):
+                      key = (name, version, vuln.get("id", "?"))
+                      ids = [key[2], *vuln.get("aliases", [])]
+                      entry = findings.setdefault(
+                          key,
+                          {
+                              "ids": ids,
+                              "fix": vuln.get("fix_versions") or [],
+                              "sources": [],
+                          },
+                      )
+                      entry["sources"].append(label)
+
+          malicious = sorted(
+              key
+              for key, entry in findings.items()
+              if any(str(i).upper().startswith("MAL-") for i in entry["ids"])
+          )
+
+          out = []
+          out.append("## Locked dependency audit\n")
+          out.append(
+              f"Advisory services queried: "
+              f"{', '.join(available) if available else 'none'}. "
+              f"{audited} locked requirement entries audited.\n"
+          )
+          if unavailable:
+              out.append(
+                  f"> Advisory service(s) unavailable this run: "
+                  f"{', '.join(unavailable)}.\n"
+              )
+
+          if malicious:
+              out.append("\n### Malicious package advisories (build failed)\n")
+              for name, version, vid in malicious:
+                  ids = ", ".join(str(i) for i in findings[(name, version, vid)]["ids"])
+                  out.append(f"- `{name}=={version}` - {ids}\n")
+
+          if findings:
+              out.append(f"\n### All advisories ({len(findings)})\n\n")
+              out.append("| Package | Version | Advisory | Fixed in | Source |\n")
+              out.append("| --- | --- | --- | --- | --- |\n")
+              for (name, version, vid) in sorted(findings):
+                  entry = findings[(name, version, vid)]
+                  fix = ", ".join(entry["fix"]) or "none published"
+                  src = ", ".join(sorted(set(entry["sources"])))
+                  out.append(f"| `{name}` | `{version}` | {vid} | {fix} | {src} |\n")
+              out.append(
+                  "\nNon-malicious advisories are reported, not gated - see the "
+                  "comment on this step for the reasoning.\n"
+              )
+          else:
+              out.append("\nNo known advisories against the locked dependency set.\n")
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.writelines(out)
+          sys.stdout.writelines(out)
+
+          # Fail closed only when we learned nothing at all. If one service
+          # answered, its data is good enough to gate on; if neither did, the
+          # check silently passing would be worse than a red build.
+          if not available:
+              print(
+                  "::error::No usable audit report was produced (advisory "
+                  "service unreachable, or --strict tripped on a requirement "
+                  "it could not collect). Failing closed rather than passing "
+                  "on no evidence."
+              )
+              raise SystemExit(1)
+
+          if malicious:
+              for name, version, vid in malicious:
+                  print(f"::error::Malicious package advisory {vid} for {name}=={version}")
+              raise SystemExit(1)
+          PY
+
+  dependency-review:
+    name: Dependency review
+    # `actions/dependency-review-action` compares the dependency graph of the
+    # base ref against the head ref, so it is only meaningful on pull requests.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Needed to resolve the pull request's base and head refs. Deliberately
+      # `read` and not `write`: `write` is only required to post the summary as
+      # a PR comment, and the job summary is enough.
+      pull-requests: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # This gate can afford to be a hard failure where the audit job
+          # cannot: it only evaluates dependencies the PR itself adds or bumps,
+          # so it is incapable of blocking a PR that does not touch
+          # dependencies. `high` rather than `low` keeps a bump from being
+          # blocked by a low-severity advisory in an unrelated transitive dep
+          # while still stopping the cases that matter.
+          fail-on-severity: high
+          fail-on-scopes: runtime, development
+          vulnerability-check: true
+          # No license policy is defined for this repo yet, so leave license
+          # enforcement off rather than fail on an undeclared policy.
+          license-check: false
+          show-patched-versions: true
+          # Posting to the PR would need `pull-requests: write`; the job summary
+          # carries the same information at lower privilege.
+          comment-summary-in-pr: never
