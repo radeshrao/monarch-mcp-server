@@ -181,6 +181,20 @@ class TestGateCannotSilentlyMissANewWriteTool:
             for method in self.WRITING_CLIENT_METHODS:
                 if f"client.{method}(" in source:
                     mutating.add(name)
+
+            # The two checks above only see a mutation held in an UPPERCASE
+            # module constant or sent through a named client method. gql_call
+            # accepts an arbitrary document, so a mutation written inline, or
+            # held in a lowercase or local name, would slip past both and
+            # register ungated with this test still green.
+            inline_mutation = r"gql\(\s*[\"']{1,3}\s*mutation\b"
+            if re.search(inline_mutation, source, re.I):
+                mutating.add(name)
+            for ident in re.findall(
+                r"graphql_query\s*=\s*([A-Za-z_][A-Za-z0-9_]*)", source
+            ):
+                if self._is_mutation_document(getattr(module, ident, None)):
+                    mutating.add(name)
         return mutating, ro
 
     async def test_every_writing_tool_is_gated(self):
