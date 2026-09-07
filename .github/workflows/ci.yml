@@ -69,6 +69,24 @@ jobs:
       - name: uv lock --check
         run: uv lock --check
 
+      # requirements.txt is generated from uv.lock and is the documented pip
+      # install path. If it drifts, that path silently loses its pins and
+      # hashes while everything else stays locked, which is the one install
+      # route with no supply chain guarantee. Regenerate it in the same commit
+      # that changes a dependency.
+      - name: requirements.txt matches uv.lock
+        run: |
+          uv export --frozen --no-emit-project --no-editable --no-dev \
+            --format requirements-txt -o "${RUNNER_TEMP}/expected.txt"
+          # Compare only the requirement and hash lines: the committed file
+          # carries an explanatory header that the export does not.
+          strip() { grep -vE '^\s*#' "$1" | grep -vE '^\s*$'; }
+          if ! diff -u <(strip "${RUNNER_TEMP}/expected.txt") <(strip requirements.txt); then
+            echo "::error::requirements.txt is out of sync with uv.lock. Regenerate it: uv export --frozen --no-emit-project --no-editable --no-dev --format requirements-txt -o requirements.txt"
+            exit 1
+          fi
+          echo "requirements.txt matches the lock."
+
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

@@ -24,16 +24,25 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
 
 2. **Install dependencies**:
 
-   **Using `pip`**:
+   **Using `uv`** (recommended):
    ```bash
-   pip install -r requirements.txt
-   pip install -e .
+   uv sync --locked
    ```
 
-   **Using `uv`** (alternative):
+   `--locked` installs exactly what `uv.lock` pins, verified against the
+   hashes it records, and refuses to re-resolve. Without it, `uv sync` is free
+   to pick up whatever versions happen to satisfy the ranges today.
+
+   **Using `pip`**:
    ```bash
-   uv sync
+   pip install -r requirements.txt --require-hashes
+   pip install -e . --no-deps
    ```
+
+   `requirements.txt` is generated from `uv.lock` and pins every transitive
+   dependency with hashes, so `--require-hashes` gives the pip path the same
+   guarantee as the uv one. `--no-deps` on the second command stops pip
+   re-resolving what the first command just pinned.
 
 3. **Configure Claude Desktop**:
    Add this to your Claude Desktop configuration file:
@@ -511,7 +520,7 @@ monarch-mcp-server/
 │   └── tools/             # MCP tools grouped by domain (accounts, transactions, budgets, …)
 ├── login_setup.py         # Terminal authentication script
 ├── pyproject.toml         # Project configuration
-├── requirements.txt       # Dependencies
+├── requirements.txt       # Generated from uv.lock, hash pinned
 └── README.md             # This documentation
 ```
 
