@@ -2,14 +2,17 @@
 #
 # This server holds a long-lived credential for the user's real financial
 # accounts, so a compromised or vulnerable dependency is the highest-impact
-# failure mode in the repo. Two checks live here:
+# failure mode in the repo. One check lives here: `audit` screens the *locked*
+# dependency set (everything `uv.lock` actually resolves to, not the loose
+# ranges in requirements.txt) against both the PyPI advisory database and OSV,
+# and fails on anything not already recorded in .github/audit-baseline.txt.
 #
-#   1. `audit` - screens the *locked* dependency set (everything `uv.lock`
-#      actually resolves to, not the loose ranges in requirements.txt) against
-#      both the PyPI advisory database and OSV.
-#   2. `dependency-review` - blocks a pull request that *introduces* a
-#      known-vulnerable dependency version. This action only works on
-#      `pull_request` events, hence the `if:` guard.
+# There was a `dependency-review` job here. It was removed rather than fixed:
+# the dependency graph is disabled for this repository, and enabling it would
+# not have helped much, because GitHub's graph does not parse `uv.lock` while
+# requirements.txt and pyproject.toml carry only lower bounds. There is no
+# concrete version for it to evaluate, and every transitive change lands in
+# the lock where it cannot see it.
 #
 # Deliberately NOT implemented here (tracked in #99 / #100): the network-egress
 # canary job, the sdist-diff artifact on bump PRs, and PyPI-vs-tag
@@ -194,12 +197,11 @@ jobs:
         #   is what actually surfaces these: it puts a standing, dated list in
         #   front of a maintainer without coupling it to unrelated work.
         #
-        # The complementary hard gate lives in the `dependency-review` job
-        # below, which can afford `fail-on-severity: high` because it only
-        # fires on PRs that change dependencies - it cannot block unrelated
-        # work by construction. Between the two, a PR that *introduces* a
-        # high-severity advisory is blocked, while advisories that merely
-        # already exist are reported.
+        # The hard gate is the baseline delta below: anything not already
+        # recorded in .github/audit-baseline.txt fails the build. That is what
+        # separates "this backlog is known and accepted" from "something new
+        # was published against a pin we ship", without going permanently red
+        # over the former.
         #
         # This step interpolates nothing; it reads only files produced above.
         run: |
