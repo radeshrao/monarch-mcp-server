@@ -41,9 +41,9 @@ on:
     - cron: "23 6 * * 1" # Mondays, 06:23 UTC
 
 # Least privilege: nothing in this workflow writes anything. `contents: read`
-# is the floor; the one job that needs more widens it at the job level. In
-# particular we do not take `security-events: write`, because we deliberately
-# do not upload SARIF - the findings go to the job summary instead.
+# is the floor and no job widens it. In particular we do not take
+# `security-events: write`, because we deliberately do not upload SARIF; the
+# findings go to the job summary instead.
 permissions:
   contents: read
 
@@ -65,11 +65,17 @@ jobs:
     permissions:
       contents: read
     env:
+      # Kept in step with ci.yml by hand. Dependabot bumps action SHAs, not a
+      # `with: version:` input, so a grep for the version string has to find
+      # both files.
+      UV_VERSION: "0.12.10"
+      UV_CHECKSUM: "173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b"
       # Pinned so that a compromised pip-audit release cannot walk in through
       # this job. The advisory data itself is fetched from the services at run
       # time, so pinning the tool does not stale the results. Bump manually.
       PIP_AUDIT_VERSION: "2.10.1"
-      # Written under RUNNER_TEMP, never the workspace. pip-audit creates its
+      BASELINE_FILE: .github/audit-baseline.txt
+      # The three below are written under RUNNER_TEMP, never the workspace. pip-audit creates its
       # --output lazily and does not truncate it when it exits fatally, and the
       # invocations below tolerate a non-zero exit. If these lived in the
       # checkout, a fork PR could commit a clean looking pip-audit-*.json, make
@@ -77,7 +83,6 @@ jobs:
       # --require-hashes --strict), and the gate would read the attacker's file
       # and report no advisories. RUNNER_TEMP is not attacker writable, so a
       # report existing there means pip-audit actually wrote it.
-      BASELINE_FILE: .github/audit-baseline.txt
       REQUIREMENTS_FILE: requirements-audit.txt
       OSV_REPORT_NAME: pip-audit-osv.json
       PYPI_REPORT_NAME: pip-audit-pypi.json
@@ -90,11 +95,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          version: "0.12.10"
+          version: ${{ env.UV_VERSION }}
           # sha256 of uv-x86_64-unknown-linux-gnu.tar.gz for the version above,
           # from the release's published .sha256 file. Verified by the action
           # before the binary is unpacked.
-          checksum: "173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b"
+          checksum: ${{ env.UV_CHECKSUM }}
           # No cross-run cache: a poisoned cache entry is a real path into a
           # security job, and this dependency tree is far too small to need one.
           enable-cache: false
@@ -193,9 +198,10 @@ jobs:
         #   false-positive rate is effectively zero. This is precisely the
         #   attack #99 is about, and it is worth blocking every PR over.
         #
-        #   Everything else -> report to the job summary. The weekly schedule
-        #   is what actually surfaces these: it puts a standing, dated list in
-        #   front of a maintainer without coupling it to unrelated work.
+        #   Everything else -> fails unless its id set intersects
+        #   .github/audit-baseline.txt. The baseline is the standing, dated
+        #   acknowledgement of what is already known and not fixable today, so
+        #   the backlog stays quiet while anything newly published is red.
         #
         # The hard gate is the baseline delta below: anything not already
         # recorded in .github/audit-baseline.txt fails the build. That is what
@@ -235,9 +241,9 @@ jobs:
 
               for dep in dependencies:
                   name, version = dep.get("name", "?"), dep.get("version", "?")
-                  for vuln in dep.get("vulns", []):
+                  for vuln in dep.get("vulns") or []:
                       key = (name, version, vuln.get("id", "?"))
-                      ids = [key[2], *vuln.get("aliases", [])]
+                      ids = [key[2], *(vuln.get("aliases") or [])]
                       entry = findings.setdefault(
                           key,
                           {
@@ -246,6 +252,10 @@ jobs:
                               "sources": [],
                           },
                       )
+                      # Union the ids: the two services can report different
+                      # alias sets for the same advisory, and keeping only the
+                      # first would miss a baseline entry naming the other's.
+                      entry["ids"] = sorted({*entry["ids"], *ids})
                       entry["sources"].append(label)
 
           # Anything whose id set does not intersect the baseline is new since
@@ -327,8 +337,9 @@ jobs:
                   src = ", ".join(sorted(set(entry["sources"])))
                   out.append(f"| `{name}` | `{version}` | {vid} | {fix} | {src} |\n")
               out.append(
-                  f"\n{len(findings) - len(new_findings)} of these are in the "
-                  "accepted baseline and did not fail the build.\n"
+                  f"\n{len(findings) - len(set(new_findings) | set(malicious))} "
+                  "of these are in the accepted baseline and did not fail the "
+                  "build.\n"
               )
           else:
               out.append("\nNo known advisories against the locked dependency set.\n")

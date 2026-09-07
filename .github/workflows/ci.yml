@@ -37,6 +37,10 @@ env:
   # integrity check and only a core.debug line to say so. Update both together.
   UV_CHECKSUM: "173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # Split out from the tests so a drifted lockfile reports as its own failure
   # instead of hiding behind a Python version in the matrix.
@@ -49,8 +53,8 @@ jobs:
       # or retagged release would otherwise run in this workflow unreviewed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # This job builds and runs fork controlled code, so do not leave the
-          # token in .git/config for it to read.
+          # Nothing in this job needs the token, so do not leave it in
+          # .git/config.
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
