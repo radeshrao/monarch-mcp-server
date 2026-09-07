@@ -5,9 +5,15 @@
 # Every entry is a deliberate, dated acknowledgement. Remove entries as
 # dependencies are upgraded. Do not add one without saying why.
 #
-# Seeded 2026-09-07 from the first CI run of this workflow.
-# Nearly all of these are transitive under mcp[cli] and clear by
-# upgrading mcp, which is tracked separately.
+# Seeded 2026-09-06 from the first CI run of this workflow.
+#
+# Do not assume an mcp bump clears this. It does not. Measured against the
+# committed lock: constraining to mcp[cli]>=1.28.1,<2 resolves to 1.29.1 and
+# clears exactly the three mcp entries. Every starlette and python-multipart
+# entry survives, because mcp depends on them with lower bounds only and uv
+# resolves minimally, so a transitive pin that already satisfies the new
+# constraint does not move. Clearing those needs an explicit
+# uv lock --upgrade-package starlette python-multipart, or a full upgrade.
 
 # black 25.1.0
 PYSEC-2026-2120  # fixed in 26.3.0

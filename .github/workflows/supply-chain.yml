@@ -7,12 +7,18 @@
 # ranges in requirements.txt) against both the PyPI advisory database and OSV,
 # and fails on anything not already recorded in .github/audit-baseline.txt.
 #
-# There was a `dependency-review` job here. It was removed rather than fixed:
-# the dependency graph is disabled for this repository, and enabling it would
-# not have helped much, because GitHub's graph does not parse `uv.lock` while
-# requirements.txt and pyproject.toml carry only lower bounds. There is no
-# concrete version for it to evaluate, and every transitive change lands in
-# the lock where it cannot see it.
+# There was a `dependency-review` job here. It was removed because the
+# dependency graph is disabled for this repository, so the action failed every
+# run. Enabling it is a settings change and is free on a public repo, so this
+# is a decision that can be revisited rather than a dead end.
+#
+# An earlier version of this comment claimed GitHub's graph cannot parse
+# `uv.lock`. That is wrong, and the correction is recorded here because it was
+# the stated reason for deleting the job: the graph does ingest `uv.lock` as a
+# pip manifest, and the compare endpoint the action calls does report added and
+# removed lock entries. The honest argument for leaving the job out is that it
+# would largely duplicate what the audit below already does against the same
+# locked set, not that it could not work.
 #
 # Deliberately NOT implemented here (tracked in #99 / #100): the network-egress
 # canary job, the sdist-diff artifact on bump PRs, and PyPI-vs-tag
@@ -135,7 +141,19 @@ jobs:
           sed -E 's/ ; [^\\]*(\\?)$/ \1/' \
             "${RUNNER_TEMP}/${REQUIREMENTS_FILE}.marked" \
             > "${RUNNER_TEMP}/${REQUIREMENTS_FILE}"
-          echo "Exported $(grep -cE '^[A-Za-z0-9]' "${RUNNER_TEMP}/${REQUIREMENTS_FILE}") pinned requirements."
+          exported=$(grep -cE '^[A-Za-z0-9]' "${RUNNER_TEMP}/${REQUIREMENTS_FILE}" || true)
+          echo "Exported ${exported} pinned requirements."
+          # An empty or truncated export is the one way this job goes green on
+          # zero coverage: pip-audit accepts an empty requirements file, exits
+          # 0, and writes a valid report with no dependencies, which the gate
+          # would read as "no known advisories". grep -c returning 1 on no
+          # matches does not trip errexit inside a command substitution, so
+          # this has to be checked explicitly.
+          if [ "${exported}" -lt 1 ]; then
+            echo "::error::The dependency export produced no requirements."
+            exit 1
+          fi
+          echo "EXPECTED_REQUIREMENTS=${exported}" >> "${GITHUB_ENV}"
 
       - name: pip-audit against OSV
         # OSV carries malicious-package advisories (MAL-* IDs) in addition to
@@ -357,6 +375,26 @@ jobs:
           # malicious package advisories, so it alone backs the hard gate below.
           # Passing because PyPI answered while OSV did not would mean the
           # malicious package check ran with zero coverage and still went green.
+          # Guard against auditing nothing and calling it clean. The count the
+          # export step measured is the only independent witness the gate has
+          # that it was handed the real dependency set.
+          expected_raw = os.environ.get("EXPECTED_REQUIREMENTS", "").strip()
+          if not expected_raw.isdigit():
+              print(
+                  "::error::The export step did not report how many "
+                  "requirements it produced, so the audit cannot be checked "
+                  "against it. Failing closed."
+              )
+              raise SystemExit(1)
+          expected = int(expected_raw)
+          if audited != expected:
+              print(
+                  f"::error::Audited {audited} requirement entries but the "
+                  f"export produced {expected}. Refusing to report on a "
+                  "dependency set that does not match what was locked."
+              )
+              raise SystemExit(1)
+
           if "OSV" not in available:
               print(
                   "::error::No usable OSV report was produced (service "
