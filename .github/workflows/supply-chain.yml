@@ -74,6 +74,7 @@ jobs:
       # --require-hashes --strict), and the gate would read the attacker's file
       # and report no advisories. RUNNER_TEMP is not attacker writable, so a
       # report existing there means pip-audit actually wrote it.
+      BASELINE_FILE: .github/audit-baseline.txt
       REQUIREMENTS_FILE: requirements-audit.txt
       OSV_REPORT_NAME: pip-audit-osv.json
       PYPI_REPORT_NAME: pip-audit-pypi.json
@@ -116,7 +117,16 @@ jobs:
             --no-emit-project \
             --no-editable \
             --format requirements-txt \
-            --output-file "${RUNNER_TEMP}/${REQUIREMENTS_FILE}"
+            --output-file "${RUNNER_TEMP}/${REQUIREMENTS_FILE}.marked"
+          # pip-audit silently skips any requirement whose environment marker is
+          # false on the runner, without even recording it as skipped, so
+          # --strict does not notice. On ubuntu that quietly drops the win32
+          # pins (colorama, pywin32, pywin32-ctypes) that Windows users of this
+          # server actually install. Strip the markers so every locked pin is
+          # audited regardless of the platform CI happens to run on.
+          sed -E 's/ ; [^\\]*(\\?)$/ \1/' \
+            "${RUNNER_TEMP}/${REQUIREMENTS_FILE}.marked" \
+            > "${RUNNER_TEMP}/${REQUIREMENTS_FILE}"
           echo "Exported $(grep -cE '^[A-Za-z0-9]' "${RUNNER_TEMP}/${REQUIREMENTS_FILE}") pinned requirements."
 
       - name: pip-audit against OSV
@@ -236,6 +246,35 @@ jobs:
                       )
                       entry["sources"].append(label)
 
+          # Anything whose id set does not intersect the baseline is new since
+          # the backlog was last acknowledged, and fails the build.
+          #
+          # Matching on the whole id set rather than the primary id is
+          # deliberate: pip-audit re-sorts ids to prefer PYSEC and CVE as the
+          # primary, so a primary id can change when a service later adds an
+          # alias. Matching every id keeps a baseline entry stable.
+          baseline: set[str] = set()
+          baseline_path = pathlib.Path(os.environ["BASELINE_FILE"])
+          if baseline_path.is_file():
+              for raw in baseline_path.read_text().splitlines():
+                  entry = raw.split("#", 1)[0].strip()
+                  if entry:
+                      baseline.add(entry.upper())
+
+          new_findings = sorted(
+              key
+              for key, entry in findings.items()
+              if not {str(i).upper() for i in entry["ids"]} & baseline
+          )
+
+          # Kept as a separate always-fail regardless of the baseline. A
+          # malicious package advisory is never something to acknowledge and
+          # move on from, so it must not be silenceable by adding a line to a
+          # file. Note the prefix test alone is not sufficient coverage:
+          # GitHub-reviewed malware is not consistently mirrored into the MAL-
+          # namespace (the canonical ctx compromise is GHSA-4g82-3jcr-q52w,
+          # "Malware in ctx"). The baseline delta above is what actually
+          # catches that case, because such an advisory would be new.
           malicious = sorted(
               key
               for key, entry in findings.items()
@@ -255,6 +294,21 @@ jobs:
                   f"{', '.join(unavailable)}.\n"
               )
 
+          if new_findings:
+              out.append(
+                  f"\n### New advisories since the baseline ({len(new_findings)}) "
+                  "- build failed\n\n"
+              )
+              out.append(
+                  "Upgrade the dependency, or add the advisory id to "
+                  f"`{os.environ['BASELINE_FILE']}` with a note saying why it "
+                  "is accepted.\n\n"
+              )
+              for name, version, vid in new_findings:
+                  entry = findings[(name, version, vid)]
+                  fix = ", ".join(entry["fix"]) or "none published"
+                  out.append(f"- `{name}=={version}` {vid}, fixed in {fix}\n")
+
           if malicious:
               out.append("\n### Malicious package advisories (build failed)\n")
               for name, version, vid in malicious:
@@ -271,8 +325,8 @@ jobs:
                   src = ", ".join(sorted(set(entry["sources"])))
                   out.append(f"| `{name}` | `{version}` | {vid} | {fix} | {src} |\n")
               out.append(
-                  "\nNon-malicious advisories are reported, not gated - see the "
-                  "comment on this step for the reasoning.\n"
+                  f"\n{len(findings) - len(new_findings)} of these are in the "
+                  "accepted baseline and did not fail the build.\n"
               )
           else:
               out.append("\nNo known advisories against the locked dependency set.\n")
@@ -300,47 +354,22 @@ jobs:
               )
               raise SystemExit(1)
 
+          failed = False
+
           if malicious:
               for name, version, vid in malicious:
                   print(f"::error::Malicious package advisory {vid} for {name}=={version}")
+              failed = True
+
+          if new_findings:
+              for name, version, vid in new_findings:
+                  print(
+                      f"::error::New advisory {vid} for {name}=={version}. "
+                      "Upgrade it, or add the id to "
+                      f"{os.environ['BASELINE_FILE']} with a reason."
+                  )
+              failed = True
+
+          if failed:
               raise SystemExit(1)
           PY
-
-  dependency-review:
-    name: Dependency review
-    # `actions/dependency-review-action` compares the dependency graph of the
-    # base ref against the head ref, so it is only meaningful on pull requests.
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      # Needed to resolve the pull request's base and head refs. Deliberately
-      # `read` and not `write`: `write` is only required to post the summary as
-      # a PR comment, and the job summary is enough.
-      pull-requests: read
-    steps:
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Dependency review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          # This gate can afford to be a hard failure where the audit job
-          # cannot: it only evaluates dependencies the PR itself adds or bumps,
-          # so it is incapable of blocking a PR that does not touch
-          # dependencies. `high` rather than `low` keeps a bump from being
-          # blocked by a low-severity advisory in an unrelated transitive dep
-          # while still stopping the cases that matter.
-          fail-on-severity: high
-          fail-on-scopes: runtime, development
-          vulnerability-check: true
-          # No license policy is defined for this repo yet, so leave license
-          # enforcement off rather than fail on an undeclared policy.
-          license-check: false
-          show-patched-versions: true
-          # Posting to the PR would need `pull-requests: write`; the job summary
-          # carries the same information at lower privilege.
-          comment-summary-in-pr: never
