@@ -35,11 +35,11 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
 
    **Using `pip`**:
    ```bash
-   pip install -r requirements.txt --require-hashes
+   pip install -r requirements-lock.txt --require-hashes
    pip install -e . --no-deps
    ```
 
-   `requirements.txt` is generated from `uv.lock` and pins every transitive
+   `requirements-lock.txt` is generated from `uv.lock` and pins every transitive
    dependency with hashes, so `--require-hashes` gives the pip path the same
    guarantee as the uv one. `--no-deps` on the second command stops pip
    re-resolving what the first command just pinned.
@@ -520,7 +520,7 @@ monarch-mcp-server/
 │   └── tools/             # MCP tools grouped by domain (accounts, transactions, budgets, …)
 ├── login_setup.py         # Terminal authentication script
 ├── pyproject.toml         # Project configuration
-├── requirements.txt       # Generated from uv.lock, hash pinned
+├── requirements-lock.txt  # Generated from uv.lock, hash pinned
 └── README.md             # This documentation
 ```
 
