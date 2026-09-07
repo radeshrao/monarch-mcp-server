@@ -66,9 +66,17 @@ jobs:
       # this job. The advisory data itself is fetched from the services at run
       # time, so pinning the tool does not stale the results. Bump manually.
       PIP_AUDIT_VERSION: "2.10.1"
+      # Written under RUNNER_TEMP, never the workspace. pip-audit creates its
+      # --output lazily and does not truncate it when it exits fatally, and the
+      # invocations below tolerate a non-zero exit. If these lived in the
+      # checkout, a fork PR could commit a clean looking pip-audit-*.json, make
+      # the tool fatal (a hashless or URL requirement in uv.lock does it under
+      # --require-hashes --strict), and the gate would read the attacker's file
+      # and report no advisories. RUNNER_TEMP is not attacker writable, so a
+      # report existing there means pip-audit actually wrote it.
       REQUIREMENTS_FILE: requirements-audit.txt
-      OSV_REPORT: pip-audit-osv.json
-      PYPI_REPORT: pip-audit-pypi.json
+      OSV_REPORT_NAME: pip-audit-osv.json
+      PYPI_REPORT_NAME: pip-audit-pypi.json
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,11 +112,12 @@ jobs:
           uv export \
             --frozen \
             --all-extras \
+            --all-groups \
             --no-emit-project \
             --no-editable \
             --format requirements-txt \
-            --output-file "${REQUIREMENTS_FILE}"
-          echo "Exported $(grep -cE '^[A-Za-z0-9]' "${REQUIREMENTS_FILE}") pinned requirements."
+            --output-file "${RUNNER_TEMP}/${REQUIREMENTS_FILE}"
+          echo "Exported $(grep -cE '^[A-Za-z0-9]' "${RUNNER_TEMP}/${REQUIREMENTS_FILE}") pinned requirements."
 
       - name: pip-audit against OSV
         # OSV carries malicious-package advisories (MAL-* IDs) in addition to
@@ -119,8 +128,9 @@ jobs:
         # when it fails outright. The gate step below distinguishes the two by
         # checking whether the JSON report parsed.
         run: |
-          uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
-            --requirement "${REQUIREMENTS_FILE}" \
+          rm -f "${RUNNER_TEMP}/${OSV_REPORT_NAME}"
+          uvx --no-config --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+            --requirement "${RUNNER_TEMP}/${REQUIREMENTS_FILE}" \
             --require-hashes \
             --no-deps \
             --disable-pip \
@@ -128,7 +138,7 @@ jobs:
             --vulnerability-service osv \
             --aliases on \
             --format json \
-            --output "${OSV_REPORT}" \
+            --output "${RUNNER_TEMP}/${OSV_REPORT_NAME}" \
             --progress-spinner off || true
 
       - name: pip-audit against the PyPI advisory database
@@ -136,8 +146,9 @@ jobs:
         # overlapping but not identical coverage, and running both means a
         # single upstream outage does not blind the check.
         run: |
-          uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
-            --requirement "${REQUIREMENTS_FILE}" \
+          rm -f "${RUNNER_TEMP}/${PYPI_REPORT_NAME}"
+          uvx --no-config --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+            --requirement "${RUNNER_TEMP}/${REQUIREMENTS_FILE}" \
             --require-hashes \
             --no-deps \
             --disable-pip \
@@ -145,7 +156,7 @@ jobs:
             --vulnerability-service pypi \
             --aliases on \
             --format json \
-            --output "${PYPI_REPORT}" \
+            --output "${RUNNER_TEMP}/${PYPI_REPORT_NAME}" \
             --progress-spinner off || true
 
       - name: Report findings and gate on malicious packages
@@ -188,9 +199,10 @@ jobs:
           import pathlib
           import sys
 
+          TEMP = pathlib.Path(os.environ["RUNNER_TEMP"])
           SOURCES = (
-              ("OSV", os.environ["OSV_REPORT"]),
-              ("PyPI", os.environ["PYPI_REPORT"]),
+              ("OSV", TEMP / os.environ["OSV_REPORT_NAME"]),
+              ("PyPI", TEMP / os.environ["PYPI_REPORT_NAME"]),
           )
 
           findings: dict[tuple[str, str, str], dict[str, object]] = {}
@@ -200,7 +212,7 @@ jobs:
 
           for label, path in SOURCES:
               try:
-                  report = json.loads(pathlib.Path(path).read_text())
+                  report = json.loads(path.read_text())
                   dependencies = report["dependencies"]
               except (OSError, ValueError, KeyError, TypeError):
                   unavailable.append(label)
@@ -274,12 +286,17 @@ jobs:
           # Fail closed only when we learned nothing at all. If one service
           # answered, its data is good enough to gate on; if neither did, the
           # check silently passing would be worse than a red build.
-          if not available:
+          # OSV is the only one of the two services that publishes MAL-
+          # malicious package advisories, so it alone backs the hard gate below.
+          # Passing because PyPI answered while OSV did not would mean the
+          # malicious package check ran with zero coverage and still went green.
+          if "OSV" not in available:
               print(
-                  "::error::No usable audit report was produced (advisory "
-                  "service unreachable, or --strict tripped on a requirement "
-                  "it could not collect). Failing closed rather than passing "
-                  "on no evidence."
+                  "::error::No usable OSV report was produced (service "
+                  "unreachable, or --strict tripped on a requirement it could "
+                  "not collect). OSV is the only source of MAL- malicious "
+                  "package advisories, so the gate has no coverage without it. "
+                  "Failing closed rather than passing on no evidence."
               )
               raise SystemExit(1)
 
