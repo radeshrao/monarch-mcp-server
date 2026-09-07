@@ -28,9 +28,50 @@ class BalanceCorrections(RootModel[Dict[date, Decimal]]):
     """
 
 
+def _sync_status(account: dict) -> dict:
+    """Summarise an account's institution-connection state.
+
+    When a bank link breaks, the account keeps its last balance and stops
+    importing; the API does not raise an error for it. The GetAccounts query
+    already returns the credential metadata that reveals this, so surface it
+    in the listing rather than requiring a second call. For a per-connection
+    view with staleness thresholds, see ``get_account_sync_health``.
+    """
+    credential = account.get("credential") or {}
+    needs_reauth = bool(credential.get("updateRequired"))
+    disconnected_at = credential.get("disconnectedFromDataProviderAt")
+    sync_disabled = bool(account.get("syncDisabled"))
+    if account.get("isManual"):
+        state = "manual"
+    elif needs_reauth:
+        state = "needs_reauth"
+    elif disconnected_at:
+        state = "disconnected"
+    elif sync_disabled:
+        state = "sync_disabled"
+    else:
+        state = "ok"
+    return {
+        "state": state,
+        "needs_reauth": needs_reauth,
+        "disconnected_at": disconnected_at,
+        "sync_disabled": sync_disabled,
+        "data_provider": credential.get("dataProvider") or account.get("dataProvider"),
+    }
+
+
 @mcp.tool()
 async def get_accounts() -> str:
-    """Get all financial accounts from Monarch Money."""
+    """Get all financial accounts from Monarch Money.
+
+    Each account includes ``last_updated_at`` (Monarch's last successful sync
+    for the account) and a ``sync`` block whose ``state`` is one of ``ok``,
+    ``needs_reauth``, ``disconnected``, ``sync_disabled`` or ``manual``. A
+    broken link does not error: balances freeze and transactions stop
+    arriving, so check ``sync.state`` before trusting a stale-looking account.
+    ``get_account_sync_health`` gives the same information per institution
+    connection, with staleness thresholds.
+    """
     try:
         client = await get_monarch_client()
         accounts = await client.get_accounts()
@@ -50,6 +91,9 @@ async def get_accounts() -> str:
                 if "isActive" in account
                 else not account.get("deactivatedAt"),
                 "is_hidden": account.get("isHidden", False),
+                "is_manual": account.get("isManual", False),
+                "last_updated_at": account.get("displayLastUpdatedAt"),
+                "sync": _sync_status(account),
             }
             account_list.append(account_info)
 
