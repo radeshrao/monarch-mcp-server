@@ -87,6 +87,22 @@ jobs:
           fi
           echo "requirements-lock.txt matches the lock."
 
+          # requirements.txt is a compatibility shim that must stay inert. If
+          # anything ever resolves it as a manifest and writes pins into it,
+          # the pip install path silently stops matching uv.lock again, which
+          # is the failure this whole arrangement exists to prevent.
+          # Captured rather than piped into `grep -q`: under pipefail, -q exits
+          # early, the upstream grep takes SIGPIPE, and the pipeline reports
+          # 141 instead of 0, so the check would never fire.
+          stray=$(grep -vE '^\s*(#|$)' requirements.txt \
+            | grep -vxF -- '-r requirements-lock.txt' || true)
+          if [ -n "${stray}" ]; then
+            echo "::error::requirements.txt must contain nothing but the include of requirements-lock.txt. Something wrote version specifiers into it:"
+            printf '%s\n' "${stray}"
+            exit 1
+          fi
+          echo "requirements.txt is still an inert shim."
+
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

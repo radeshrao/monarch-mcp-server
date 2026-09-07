@@ -44,6 +44,12 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
    guarantee as the uv one. `--no-deps` on the second command stops pip
    re-resolving what the first command just pinned.
 
+   `pip install -r requirements.txt` still works and installs exactly the same
+   set. That file is now a one line include of `requirements-lock.txt`, kept so
+   existing setups and scripts do not break. The pins moved out of it because a
+   root `requirements.txt` gets resolved as an independent manifest, which had
+   started producing a pinned set that disagreed with `uv.lock`.
+
 3. **Configure Claude Desktop**:
    Add this to your Claude Desktop configuration file:
 
