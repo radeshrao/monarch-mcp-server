@@ -358,10 +358,15 @@ live tool registry and the functions' signatures, so it does not drift.
 | `update_category` | Update an existing category's settings | `category_id`, `name`?, `icon`?, `group_id`?, `category_type`?, `exclude_from_budget`?, `budget_variability`?, `rollover_enabled`?, `rollover_start_month`?, `rollover_starting_balance`?, `rollover_frequency`?, `rollover_target_amount`?, `rollover_type`?, `confirm_rollover_reset`?, `dry_run`? |
 | `update_merchant` | Update a merchant's name and/or recurring transaction stream settings | `merchant_id`, `name`?, `is_recurring`?, `frequency`?, `base_date`?, `amount`?, `is_active`? |
 | `update_savings_goal` | Update a savings goal's target or monthly contribution | `goal_id`, `target_amount`?, `target_date`?, `name`?, `priority`?, `goal_type`?, `is_sinking_fund`? |
-| `update_transaction` | Update an existing transaction in Monarch Money | `transaction_id`, `category_id`?, `merchant_name`?, `goal_id`?, `amount`?, `date`?, `hide_from_reports`?, `needs_review`?, `notes`? |
+| `update_transaction` | Update an existing transaction in Monarch Money | `transaction_id`, `category_id`?, `merchant_name`?, `goal_id`?, `amount`?, `date`?, `hide_from_reports`?, `needs_review`?, `notes`?, `owner_user_id`? |
 | `update_transaction_notes` | Update the notes/memo for a transaction | `transaction_id`, `notes`, `receipt_url`? |
 | `update_transaction_rule` | Update an existing transaction rule | `rule_id`, `merchant_criteria_operator`?, `merchant_criteria_value`?, `merchant_criteria_values`?, `merchant_criteria`?, `original_statement_operator`?, `original_statement_values`?, `original_statement_criteria`?, `use_original_statement`?, `amount_operator`?, `amount_value`?, `amount_lower`?, `amount_upper`?, `amount_is_expense`?, `set_category_id`?, `set_merchant_name`?, `add_tag_ids`?, `link_goal_id`?, `hide_from_reports`?, `review_status`?, `account_ids`?, `category_ids`?, `clear_category`?, `clear_merchant`?, `clear_tags`?, `clear_goal_link`?, `clear_review_status`?, `apply_to_existing`? |
 | `upload_account_balance_history` | Upload corrected balance snapshots for an account | `account_id`, `corrections`, `dry_run`? |
+
+`get_household_members` returns members in `myHousehold.users`. Pass a member's
+`id` to `update_transaction(owner_user_id=...)` to assign ownership, or pass
+`owner_user_id=""` to set Shared ownership. Omitting the parameter or passing
+`null` leaves the existing owner unchanged. Pending invitations are not included.
 
 ## 📝 Usage Examples
 
