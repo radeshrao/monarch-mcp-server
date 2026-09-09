@@ -297,7 +297,7 @@ Once authenticated, use these tools directly in Claude Desktop or Claude Code:
 
 ## 🛠️ Available Tools
 
-All 58 registered tools. Required parameters are listed first, optional ones
+All 59 registered tools. Required parameters are listed first, optional ones
 are marked with a trailing question mark. This table is generated from the
 live tool registry and the functions' signatures, so it does not drift.
 
@@ -325,6 +325,7 @@ live tool registry and the functions' signatures, so it does not drift.
 | `get_debt_paydown` | Get the debt paydown plan and the accounts feeding it | `method`? |
 | `get_goal_contributions` | Show a goal's budgeted contributions, broken down by funding account | `goal_id`, `month`? |
 | `get_goals` | List Monarch savings and debt-paydown goals | None |
+| `get_household_members` | Get household member IDs, names, display names, and roles | None |
 | `get_merchant` | Get a merchant's details including recurring transaction stream configuration | `merchant_id` |
 | `get_net_worth` | Get net worth history over time | `start_date`?, `end_date`?, `account_type`? |
 | `get_net_worth_by_account_type` | Get net worth breakdown by account type over time | `start_date`, `timeframe`? |
@@ -563,7 +564,7 @@ tool that is not there.
 }
 ```
 
-This leaves 30 of the 58 tools available, covering everything that reads.
+This leaves 31 of the 59 tools available, covering everything that reads.
 Read only is off by default, so existing setups are unaffected. Note that it
 also removes the login and logout tools, since those change durable state, so
 authenticate with `login_setup.py` before enabling it.
