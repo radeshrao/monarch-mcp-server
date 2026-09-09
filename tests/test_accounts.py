@@ -59,6 +59,63 @@ class TestGetAccounts:
         result = json.loads(await get_accounts())
         assert result[0]["owned_by_user"] is None
 
+    async def test_sync_status_ok_by_default(self):
+        result = json.loads(await get_accounts())
+        assert result[0]["sync"]["state"] == "ok"
+        assert result[0]["sync"]["needs_reauth"] is False
+        assert result[0]["sync"]["disconnected_at"] is None
+        assert result[0]["is_manual"] is False
+        assert result[0]["last_updated_at"] is None
+
+    async def test_sync_status_surfaces_broken_connection(self, mock_monarch_client):
+        """A frozen bank link is silent in Monarch; get_accounts must say so."""
+        mock_monarch_client.get_accounts.return_value = {
+            "accounts": [
+                {
+                    "id": "acc-reauth",
+                    "displayName": "Needs Login",
+                    "displayLastUpdatedAt": "2026-02-08T04:00:00+00:00",
+                    "credential": {"updateRequired": True, "dataProvider": "PLAID"},
+                },
+                {
+                    "id": "acc-disc",
+                    "displayName": "Dropped",
+                    "credential": {
+                        "updateRequired": False,
+                        "disconnectedFromDataProviderAt": "2026-03-01T00:00:00+00:00",
+                        "dataProvider": "FINICITY",
+                    },
+                },
+                {
+                    "id": "acc-paused",
+                    "displayName": "Paused",
+                    "syncDisabled": True,
+                    "credential": {"updateRequired": False},
+                },
+                {
+                    "id": "acc-manual",
+                    "displayName": "House",
+                    "isManual": True,
+                    "credential": None,
+                },
+            ]
+        }
+        result = {a["id"]: a for a in json.loads(await get_accounts())}
+
+        assert result["acc-reauth"]["sync"]["state"] == "needs_reauth"
+        assert result["acc-reauth"]["sync"]["needs_reauth"] is True
+        assert result["acc-reauth"]["sync"]["data_provider"] == "PLAID"
+        assert result["acc-reauth"]["last_updated_at"] == "2026-02-08T04:00:00+00:00"
+
+        assert result["acc-disc"]["sync"]["state"] == "disconnected"
+        assert result["acc-disc"]["sync"]["disconnected_at"] == "2026-03-01T00:00:00+00:00"
+
+        assert result["acc-paused"]["sync"]["state"] == "sync_disabled"
+        assert result["acc-paused"]["sync"]["sync_disabled"] is True
+
+        assert result["acc-manual"]["sync"]["state"] == "manual"
+        assert result["acc-manual"]["is_manual"] is True
+
     async def test_handles_empty_accounts(self, mock_monarch_client):
         mock_monarch_client.get_accounts.return_value = {"accounts": []}
         result = json.loads(await get_accounts())
